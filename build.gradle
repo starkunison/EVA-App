@@ -1,7 +1,10 @@
-apply plugin: 'com.android.application'
+plugins {
+    id 'com.android.application' version '7.4.2'
+}
 
 android {
     compileSdkVersion 33
+
     defaultConfig {
         applicationId "com.eva.app"
         minSdkVersion 21
@@ -9,6 +12,7 @@ android {
         versionCode 1
         versionName "1.0"
     }
+
     buildTypes {
         release {
             minifyEnabled false
@@ -16,4 +20,7 @@ android {
     }
 }
 
-dependencies {}
+dependencies {
+    implementation 'androidx.appcompat:appcompat:1.6.1'
+    implementation 'com.google.android.material:material:1.9.0'
+}

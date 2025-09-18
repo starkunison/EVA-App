@@ -7,16 +7,15 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v3
+        uses: actions/setup-java@v4
         with:
-          distribution: temurin
-          java-version: 17
+          java-version: '17'
+          distribution: 'temurin'
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
@@ -24,14 +23,17 @@ jobs:
       - name: Accept Android SDK licenses
         run: yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses
 
+      - name: Install SDK platforms
+        run: yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
+
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
       - name: Build Debug APK
-        run: ./gradlew assembleDebug --stacktrace
+        run: ./gradlew assembleDebug
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: EVA.apk
+          name: EVA-debug
           path: app/build/outputs/apk/debug/app-debug.apk

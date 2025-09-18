@@ -1,7 +1,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.eva.app">
+
     <application
-        android:label="EVA"
+        android:label="@string/app_name"
         android:theme="@android:style/Theme.Material.Light">
         <activity android:name=".MainActivity">
             <intent-filter>
@@ -10,4 +11,5 @@
             </intent-filter>
         </activity>
     </application>
+
 </manifest>

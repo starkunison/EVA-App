@@ -1,0 +1,135 @@
+name: Clean old build artifacts
+
+on:
+  push:
+    paths:
+      - '.github/workflows/cleanup-old-artifacts.yml'
+  workflow_dispatch:
+  schedule:
+    - cron: '17 3 * * 0'
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: artifact-cleanup
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Keep recent builds and remove only obsolete artifacts
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import collections
+          import json
+          import os
+          import time
+          import urllib.error
+          import urllib.parse
+          import urllib.request
+
+          repo = os.environ["GH_REPO"]
+          token = os.environ["GH_TOKEN"]
+          base = "https://api.github.com/repos/" + repo
+
+          def request(method, route):
+              req = urllib.request.Request(
+                  base + route,
+                  method=method,
+                  headers={
+                      "Accept": "application/vnd.github+json",
+                      "Authorization": "Bearer " + token,
+                      "X-GitHub-Api-Version": "2022-11-28",
+                      "User-Agent": "STARK-Actions-Cleanup"
+                  }
+              )
+              with urllib.request.urlopen(req, timeout=45) as response:
+                  raw = response.read()
+                  return json.loads(raw.decode("utf-8")) if raw else None
+
+          def all_items(route, key):
+              out = []
+              page = 1
+              while True:
+                  sep = "&" if "?" in route else "?"
+                  result = request("GET", route + sep + "per_page=100&page=" + str(page))
+                  chunk = result.get(key, [])
+                  out.extend(chunk)
+                  if len(chunk) < 100:
+                      break
+                  page += 1
+              return out
+
+          artifacts = all_items("/actions/artifacts", "artifacts")
+          runs = all_items("/actions/runs", "workflow_runs")
+          run_by_id = {r["id"]: r for r in runs}
+          artifact_groups = collections.defaultdict(list)
+          for artifact in artifacts:
+              run_id = (artifact.get("workflow_run") or {}).get("id")
+              workflow_id = run_by_id.get(run_id, {}).get("workflow_id")
+              # Unknown historical workflow IDs are kept in a separate bucket.
+              artifact_groups[str(workflow_id or "legacy")].append(artifact)
+
+          keep = set()
+          # Safety net: preserve the newest six artifacts in the repository.
+          for artifact in sorted(artifacts, key=lambda a: a["created_at"], reverse=True)[:6]:
+              keep.add(artifact["id"])
+
+          for group in artifact_groups.values():
+              group.sort(key=lambda a: a["created_at"], reverse=True)
+              # Keep the last four artifact-bearing runs of EACH workflow,
+              # even if artifact names changed between app versions.
+              recent_run_ids = []
+              for artifact in group:
+                  run_id = (artifact.get("workflow_run") or {}).get("id", artifact["id"])
+                  if run_id not in recent_run_ids:
+                      recent_run_ids.append(run_id)
+                  if len(recent_run_ids) == 4:
+                      break
+              # Also keep the last two SUCCESSFUL artifact-bearing runs.
+              successful_ids = []
+              for artifact in group:
+                  run_id = (artifact.get("workflow_run") or {}).get("id", artifact["id"])
+                  if run_by_id.get(run_id, {}).get("conclusion") == "success":
+                      if run_id not in successful_ids:
+                          successful_ids.append(run_id)
+                  if len(successful_ids) == 2:
+                      break
+              safe_runs = set(recent_run_ids + successful_ids)
+              for artifact in group:
+                  run_id = (artifact.get("workflow_run") or {}).get("id", artifact["id"])
+                  if run_id in safe_runs:
+                      keep.add(artifact["id"])
+
+          obsolete = sorted(
+              (a for a in artifacts if a["id"] not in keep),
+              key=lambda a: a["created_at"]
+          )
+          total = sum(a.get("size_in_bytes", 0) for a in obsolete)
+          print("Repository:", repo, flush=True)
+          print("Artifacts found:", len(artifacts), flush=True)
+          print("Protected recent artifacts:", len(keep), flush=True)
+          print("Old artifacts to delete:", len(obsolete), flush=True)
+          print("Potential bytes to free:", total, flush=True)
+          deleted = 0
+          for artifact in obsolete:
+              artifact_id = artifact["id"]
+              try:
+                  request("DELETE", "/actions/artifacts/" + str(artifact_id))
+                  deleted += 1
+              except urllib.error.HTTPError as error:
+                  print("DELETE failed for", artifact_id, "HTTP", error.code, flush=True)
+                  raise
+              if deleted % 20 == 0:
+                  print("Deleted", deleted, "of", len(obsolete), flush=True)
+              time.sleep(0.20)
+          print("DONE: deleted", deleted, "old artifacts; latest builds preserved.", flush=True)
+          PY
